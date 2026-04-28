@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>AI Ассистент</title>
+
+<style>
+body {
+    font-family: Arial;
+    background: #f5f5f5;
+    padding: 40px;
+}
+
+.container {
+    max-width: 700px;
+    margin: auto;
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+}
+
+h2 {
+    text-align: center;
+}
+
+.section {
+    margin-top: 20px;
+}
+
+.box {
+    background: #f0f0f0;
+    padding: 15px;
+    border-radius: 8px;
+}
+
+button {
+    margin-top: 10px;
+    padding: 10px;
+    width: 100%;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+}
+
+ul {
+    padding-left: 20px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+    <h2>AI Ассистент совещаний</h2>
+
+    <input type="file" id="fileInput" accept=".mp3,.wav,.m4a,.ogg,.flac">
+    <button onclick="sendFile()">Обработать</button>
+    <div id="error" style="color: red; margin-top: 10px;"></div>
+
+    <div class="section">
+        <h3>Расшифровка</h3>
+        <div class="box" id="transcription"></div>
+    </div>
+
+    <div class="section">
+        <h3>Саммари</h3>
+        <div class="box" id="summary"></div>
+    </div>
+
+    <div class="section">
+        <h3>Участники</h3>
+        <ul id="participants"></ul>
+    </div>
+
+    <div class="section">
+        <h3>Задачи</h3>
+        <ul id="tasks"></ul>
+    </div>
+</div>
+
+<script>
+async function sendFile() {
+    const transcriptionBox = document.getElementById("transcription");
+    const summaryBox = document.getElementById("summary");
+    const participantsList = document.getElementById("participants");
+    const tasksList = document.getElementById("tasks");
+    const errorBox = document.getElementById("error");
+
+    errorBox.textContent = "";
+
+    if (!fileInput.files.length) {
+        alert("Выбери файл");
+        return;
+    }
+
+    const file = fileInput.files[0];
+
+    // Проверяем файл на странице
+    const allowed = ["mp3", "wav", "m4a", "ogg", "flac"];
+    const extension = file.name.split(".").pop().toLowerCase();
+
+    if (!allowed.includes(extension)) {
+        errorBox.textContent = "Можно загружать только аудио: mp3, wav, m4a, ogg, flac";
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    transcriptionBox.textContent = "Обработка...";
+    summaryBox.textContent = "Обработка...";
+    participantsList.innerHTML = "";
+    tasksList.innerHTML = "";
+
+    try {
+        const response = await fetch("http://127.0.0.1:8000/process", {
+            method: "POST",
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.detail || "Ошибка сервера");
+        }
+
+        transcriptionBox.textContent = data.transcription || "Расшифровка не найдена";
+        summaryBox.textContent = data.summary || "Нет данных";
+
+        if (data.participants && data.participants.length > 0) {
+            data.participants.forEach(p => {
+                const li = document.createElement("li");
+                li.textContent = `${p.name} (${p.role})`;
+                participantsList.appendChild(li);
+            });
+        } else {
+            const li = document.createElement("li");
+            li.textContent = "Участники не найдены";
+            participantsList.appendChild(li);
+        }
+
+        if (data.tasks && data.tasks.length > 0) {
+            data.tasks.forEach(t => {
+                const li = document.createElement("li");
+                li.textContent = `${t.task} → ${t.assignee}`;
+                tasksList.appendChild(li);
+            });
+        } else {
+            const li = document.createElement("li");
+            li.textContent = "Задачи не найдены";
+            tasksList.appendChild(li);
+        }
+
+    } catch (error) {
+        transcriptionBox.textContent = "";
+        summaryBox.textContent = "";
+        errorBox.textContent = error.message || "Сервер недоступен";
+    }
+}
+</script>
+
+</body>
+</html>
