@@ -1,13 +1,11 @@
 from datetime import datetime
 
 
-def create_protocol(data):
-    protocol = {
+def create_protocol(data: dict) -> dict:
+    return {
         "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "transcription": data.get("transcription", ""),
-        "participants": data.get("participants", []),
         "summary": data.get("summary", ""),
-        "tasks": data.get("tasks", [])
+        "participants": data.get("participants", []),
+        "tasks": data.get("tasks", []),
     }
-
-    return protocol

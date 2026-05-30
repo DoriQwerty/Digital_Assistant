@@ -1,30 +1,18 @@
-import requests
 import json
+import logging
+from ollama_client import ask_ollama, OllamaError
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+logger = logging.getLogger(__name__)
 
-
-def ask_ollama(prompt):
-    response = requests.post(OLLAMA_URL, json={
-        "model": "llama3",
-        "prompt": prompt,
-        "temperature": 0.2,
-        "stream": False
-    })
-
-    return response.json()["response"]
-
-
-def analyze_text(text: str):
-    prompt = f"""
+ANALYSIS_PROMPT = """
 Ты — система обработки совещаний.
 
-Проанализируй текст и верни СТРОГО JSON.
+Проанализируй текст и верни СТРОГО JSON без какого-либо другого текста.
 
 Формат:
 {{
   "participants": [
-    {{"name": "Спикер 1", "role": "Участник"}}
+    {{"name": "Имя", "role": "Роль"}}
   ],
   "tasks": [
     {{"task": "что сделать", "assignee": "кто делает"}}
@@ -32,102 +20,90 @@ def analyze_text(text: str):
 }}
 
 Правила:
-- Никакого текста кроме JSON
-- Если имя неизвестно, пиши Спикер 1, Спикер 2
-- Если задач нет, верни "tasks": []
+- Только JSON, никакого текста до или после
+- Если имя неизвестно — пиши «Спикер 1», «Спикер 2» и т.д.
+- Если задач нет — верни "tasks": []
 - Минимум 1 участник
 
 Текст:
 {text}
 """
 
-    result = ask_ollama(prompt)
-
-    print("RAW LLM:", result)
-
-    result = result.replace("```json", "")
-    result = result.replace("```", "")
-    result = result.strip()
-
-    try:
-        return json.loads(result)
-    except:
-        return {
-            "participants": [
-                {
-                    "name": "Спикер 1",
-                    "role": "Участник"
-                }
-            ],
-            "tasks": []
-        }
-
-
-def make_speaker_transcription(text: str):
-    prompt = f"""
+SPEAKER_PROMPT = """
 Ты редактор расшифровки совещания.
 
-Тебе дали текст, который плохо распознала программа.
-В нём могут быть ошибки в словах.
+Тебе дали текст после автоматического распознавания речи — в нём могут быть ошибки.
 
-Твоя задача:
-1. Исправить ошибки распознавания.
-2. Сделать текст нормальным и читаемым.
-3. Расставить запятые и точки.
-4. Разделить текст по спикерам, если видно, что говорит другой человек.
+Задача:
+1. Исправить очевидные ошибки распознавания.
+2. Расставить знаки препинания.
+3. Разделить по спикерам, если видна смена говорящего.
 
-Очень важные правила:
-- Исправляй только очевидные ошибки.
-- Не меняй смысл.
-- Не придумывай новые факты.
-- Если непонятно, где сменился человек, оставь всё как Спикер 1.
-- Не добавляй пустых спикеров.
-- Не пиши "нет текста".
-- Не пиши объяснения.
-- Не пиши JSON.
+Правила:
+- Не меняй смысл, не придумывай факты.
+- Если не ясно, где сменился спикер — весь текст как «Спикер 1».
+- Не добавляй пустых строк и пустых спикеров.
+- Только исправленный текст, без объяснений.
 
-Примеры исправлений:
-- "Важаемые" → "Уважаемые"
-- "прицательным" → "председателем"
-- "перспективо" → "перспективы"
-- "за спутки" → "за скобки"
-- "с респективой" → "с перспективой"
+Формат:
+Спикер 1: текст
+Спикер 2: текст
 
-Формат ответа:
-Спикер 1: исправленный текст
-Спикер 2: исправленный текст
-
-Текст для исправления:
+Текст:
 {text}
 """
 
+SUMMARY_PROMPT = """
+Сделай краткое саммари совещания на русском языке.
+
+Требования:
+- 5–7 предложений
+- Только по содержанию текста
+- Без английских слов
+
+Текст:
+{text}
+"""
+
+
+def analyze_text(text: str) -> dict:
+    prompt = ANALYSIS_PROMPT.format(text=text)
     try:
-        result = ask_ollama(prompt)
-        result = result.strip()
+        raw = ask_ollama(prompt)
+        logger.debug(f"Ответ анализа: {raw[:200]}")
+        cleaned = raw.replace("```json", "").replace("```", "").strip()
+        return json.loads(cleaned)
+    except (OllamaError, json.JSONDecodeError) as e:
+        logger.warning(f"Не удалось распарсить анализ: {e}")
+        return {"participants": [{"name": "Спикер 1", "role": "Участник"}], "tasks": []}
 
-        lines = result.split("\n")
-        good_lines = []
 
-        for line in lines:
-            line = line.strip()
+def make_speaker_transcription(text: str) -> str:
+    prompt = SPEAKER_PROMPT.format(text=text)
+    try:
+        result = ask_ollama(prompt).strip()
+        # Убираем пустые строки и «пустые» спикеры вида «Спикер 1:»
+        lines = [
+            line.strip()
+            for line in result.splitlines()
+            if line.strip() and not _is_empty_speaker_line(line)
+        ]
+        return "\n".join(lines) if lines else f"Спикер 1: {text}"
+    except OllamaError as e:
+        logger.warning(f"Ошибка при форматировании спикеров: {e}")
+        return f"Спикер 1: {text}"
 
-            if line == "":
-                continue
 
-            if "нет текста" in line.lower():
-                continue
+def make_summary(text: str) -> str:
+    prompt = SUMMARY_PROMPT.format(text=text)
+    try:
+        return ask_ollama(prompt).strip()
+    except OllamaError as e:
+        logger.warning(f"Ошибка при создании саммари: {e}")
+        return "Не удалось создать саммари."
 
-            if line.lower().startswith("спикер") and line.endswith(":"):
-                continue
 
-            good_lines.append(line)
-
-        final_text = "\n".join(good_lines)
-
-        if final_text.strip() == "":
-            return "Спикер 1: " + text
-
-        return final_text
-
-    except:
-        return "Спикер 1: " + text
+def _is_empty_speaker_line(line: str) -> bool:
+    """Строка вида 'Спикер 1:' без текста после двоеточия."""
+    stripped = line.strip()
+    return stripped.lower().startswith("спикер") and stripped.endswith(":")

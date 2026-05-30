@@ -1,8 +1,24 @@
+import logging
 import whisper
 
-model = whisper.load_model("medium")
+logger = logging.getLogger(__name__)
+
+# Загружаем модель один раз при старте сервера
+_model = None
 
 
-def transcribe_audio(file_path: str):
+def get_model():
+    global _model
+    if _model is None:
+        logger.info("Загружаю Whisper medium...")
+        _model = whisper.load_model("medium")
+    return _model
+
+
+def transcribe_audio(file_path: str) -> str:
+    model = get_model()
+    logger.info(f"Транскрибирую файл: {file_path}")
     result = model.transcribe(file_path, language="ru")
-    return result["text"]
+    text = result["text"].strip()
+    logger.info(f"Транскрипция готова, длина: {len(text)} символов")
+    return text
